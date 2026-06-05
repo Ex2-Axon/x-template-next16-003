@@ -60,6 +60,9 @@ def run_command(
     input_data: Optional[bytes] = None,
     env: Optional[Dict[str, str]] = None,
 ):
+    if env is None:
+        env = {**os.environ}
+        env["GIT_TERMINAL_PROMPT"] = "0"
     return subprocess.run(
         command,
         cwd=str(cwd),
@@ -77,8 +80,8 @@ def git_initialized(project_dir: Path) -> bool:
 
 def git_has_commits(project_dir: Path) -> bool:
     try:
-        run_command(["git", "rev-parse", "--is-inside-work-tree"], cwd=project_dir)
-        run_command(["git", "rev-parse", "HEAD"], cwd=project_dir)
+        run_command(["git", "rev-parse", "--is-inside-work-tree"], cwd=project_dir, capture_output=True)
+        run_command(["git", "rev-parse", "HEAD"], cwd=project_dir, capture_output=True)
         return True
     except subprocess.CalledProcessError:
         return False
@@ -118,6 +121,7 @@ def run_github_init() -> None:
             cwd=script_dir,
             input_data=token_input.encode("utf-8"),
             env=auth_env,
+            capture_output=True,
         )
     except subprocess.CalledProcessError as exc:
         print("❌ GitHub authentication failed.")
@@ -127,6 +131,12 @@ def run_github_init() -> None:
             except Exception:
                 pass
         return
+
+    # Ensure git is configured to use gh auth credentials
+    try:
+        run_command(["gh", "auth", "setup-git"], cwd=script_dir, capture_output=True)
+    except subprocess.CalledProcessError:
+        print("⚠️ Failed to configure git credential helper, but continuing.")
 
     print(f"🛠️ Creating repository: {owner}/{repo}...")
     try:
@@ -157,12 +167,13 @@ def run_github_init() -> None:
         run_command(["git", "remote", "add", "origin", remote_url], cwd=script_dir)
         print("🔗 Remote 'origin' configured.")
     except subprocess.CalledProcessError:
-        print("ℹ️ Remote origin already exists. Skipping add.")
+        print("ℹ️ Remote origin already exists. Updating URL.")
+        run_command(["git", "remote", "set-url", "origin", remote_url], cwd=script_dir)
 
     print(f"🚀 Pushing branch '{branch}' to GitHub...")
     run_command(["git", "branch", "-M", branch], cwd=script_dir)
     try:
-        run_command(["git", "push", "-u", "origin", branch], cwd=script_dir)
+        run_command(["git", "push", "-u", "origin", branch], cwd=script_dir, capture_output=True)
         print("✅ Pushed successfully!")
     except subprocess.CalledProcessError as exc:
         print("❌ Push failed.")
