@@ -62,7 +62,9 @@ def run_command(
 ):
     if env is None:
         env = {**os.environ}
-        env["GIT_TERMINAL_PROMPT"] = "0"
+    else:
+        env = {**env}
+    env.setdefault("GIT_TERMINAL_PROMPT", "0")
     return subprocess.run(
         command,
         cwd=str(cwd),
@@ -110,37 +112,23 @@ def run_github_init() -> None:
         print("❌ Error: Missing GITHUB_TOKEN, GITHUB_OWNER, or GITHUB_REPO in .env")
         return
 
-    print("🔑 Authenticating with GitHub CLI...")
-    auth_env = {**os.environ}
-    auth_env.pop("GH_TOKEN", None)
-    auth_env.pop("GITHUB_TOKEN", None)
-    token_input = token.strip() + "\n"
-    try:
-        run_command(
-            ["gh", "auth", "login", "--with-token"],
-            cwd=script_dir,
-            input_data=token_input.encode("utf-8"),
-            env=auth_env,
-            capture_output=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        print("❌ GitHub authentication failed.")
-        if exc.stderr:
-            try:
-                print(exc.stderr.decode("utf-8", errors="replace"))
-            except Exception:
-                pass
-        return
+    print("🔑 Using GH_TOKEN for GitHub CLI authentication...")
+    gh_env = {**os.environ, "GH_TOKEN": token.strip()}
 
-    # Ensure git is configured to use gh auth credentials
     try:
-        run_command(["gh", "auth", "setup-git"], cwd=script_dir, capture_output=True)
+        run_command(["gh", "auth", "status", "--hostname", "github.com"], cwd=script_dir, capture_output=True, env=gh_env)
     except subprocess.CalledProcessError:
-        print("⚠️ Failed to configure git credential helper, but continuing.")
+        print("⚠️ GH_TOKEN is set, but GitHub CLI auth status could not be verified. Continuing with GH_TOKEN environment.")
+
+    # Ensure git is configured to use gh auth credentials if possible
+    try:
+        run_command(["gh", "auth", "setup-git", "--hostname", "github.com"], cwd=script_dir, capture_output=True, env=gh_env)
+    except subprocess.CalledProcessError:
+        print("⚠️ Failed to configure git credential helper. Continuing with GH_TOKEN environment.")
 
     print(f"🛠️ Creating repository: {owner}/{repo}...")
     try:
-        run_command(["gh", "repo", "create", f"{owner}/{repo}", "--public", "--confirm"], cwd=script_dir)
+        run_command(["gh", "repo", "create", f"{owner}/{repo}", "--public", "--confirm"], cwd=script_dir, env=gh_env)
         print(f"✅ Repository '{owner}/{repo}' created.")
     except subprocess.CalledProcessError:
         print("⚠️ Repository may already exist or creation failed. Continuing...")
@@ -173,7 +161,7 @@ def run_github_init() -> None:
     print(f"🚀 Pushing branch '{branch}' to GitHub...")
     run_command(["git", "branch", "-M", branch], cwd=script_dir)
     try:
-        run_command(["git", "push", "-u", "origin", branch], cwd=script_dir, capture_output=True)
+        run_command(["git", "push", "-u", "origin", branch], cwd=script_dir, env=gh_env, capture_output=True)
         print("✅ Pushed successfully!")
     except subprocess.CalledProcessError as exc:
         print("❌ Push failed.")
